@@ -1,0 +1,104 @@
+#!/usr/bin/python
+
+# Quick and dirty Ansible module to get network related info from an IP address and subnet.
+# Designed to give the same info as the ipcalc program.
+#
+# The output from this module is a bunch of Ansible facts
+
+import sys
+import os
+
+DOCUMENTATION = '''
+---
+module: ipcalc
+short_description: Return network information
+description:
+   - Given an IP address and netmask, return the following facts:
+        ipcalc_ip_addr
+        ipcalc_netmask
+        ipcalc_subnet
+        ipcalc_netmask_bits
+        ipcalc_network
+        ipcalc_broadcast_addr
+        ipcalc_host_min
+        ipcalc_host_max
+        ipcalc_num_hosts
+version_added: "1.5"
+author: Paul Markham
+requirements:
+  - none
+options:
+  ip_addr:
+    required: true
+    description:
+      - IP address
+  netmask:
+    required: true
+    description:
+      - netmask
+'''
+
+EXAMPLES = '''
+ipcalc: ip_addr=192.168.0.1 netmask=255.255.255.0
+'''
+
+def string_to_binary(addr):
+    octets = addr.split('.')
+    if len(octets) != 4:
+        raise Exception('Invalid ip address')
+    bin_num  = 0;
+    for i in range(0, 4):
+        octet = int(octets[i])
+        if octet < 0 or octet > 255:
+            raise Exception('Invalid ip address component (%s)' % octet)
+        bin_num |= octet << (8 * (3 - i))
+    return bin_num
+
+def binary_to_string(num):
+    return '%d.%d.%d.%d' % ((num & 0xff000000) >> 24,  (num & 0x00ff0000) >> 16, (num & 0x0000ff00) >> 8, num & 0x000000ff)
+
+def count_bits(num):
+    count = 1
+    for i in range(0,31):
+        num = (num << 1) & 0xffffffff
+        if num == 0:
+            break
+        count += 1
+    return count
+
+def main():
+    module = AnsibleModule(
+        argument_spec  = dict(
+            ip_addr      = dict(required=True),
+            netmask      = dict(required=True),
+        )
+    )
+
+    ip = string_to_binary(module.params['ip_addr'])
+    mask = string_to_binary(module.params['netmask'])
+    subnet = (ip & mask)
+    bits = count_bits(mask)
+
+    broadcast_addr = subnet | (mask ^ 0xffffffff)
+    host_min = subnet | 1
+    host_max = broadcast_addr & 0xfffffffe
+
+    num_hosts = (2 ** (32 - bits)) -2
+
+    facts = {
+        'ipcalc_ip_addr'        : module.params['ip_addr'],
+        'ipcalc_netmask'        : module.params['netmask'],
+        'ipcalc_subnet'         : binary_to_string(subnet),
+        'ipcalc_netmask_bits'   : bits,
+        'ipcalc_network'        : '%s/%s' % (binary_to_string(subnet), bits),
+        'ipcalc_broadcast_addr' : binary_to_string(broadcast_addr),
+        'ipcalc_host_min'       : binary_to_string(host_min),
+        'ipcalc_host_max'       : binary_to_string(host_max),
+        'ipcalc_num_hosts'      : num_hosts,
+    }
+
+    module.exit_json(ansible_facts = facts)
+
+# include magic from lib/ansible/module_common.py
+#<<INCLUDE_ANSIBLE_MODULE_COMMON>>
+main()
